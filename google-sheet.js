@@ -30,7 +30,7 @@ export const appendToGoogleSheet = async (auth, sheetName, rows) => {
     await sheets.spreadsheets.values.append({
         spreadsheetId: process.env['G_SPREADSHEET_ID'],
         range: `${sheetName}!A1`,
-        valueInputOption: 'RAW',
+        valueInputOption: 'USER_ENTERED',
         resource: {
             values: rows,
         },
