@@ -1,0 +1,7 @@
+.env
+node_modules/
+*.pem
+*.csv
+dist/
+service-account-key-gs.json
+mongo-data/

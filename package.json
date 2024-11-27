@@ -1,0 +1,14 @@
+{
+  "name": "cs-transactions-sync",
+  "version": "1.0.0",
+  "description": "Simple app that sync transactions with CS bank api and save to mongo then sync it with google sheets",
+  "main": "app.js",
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.7.8",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "mongoose": "^8.8.3"
+  }
+}
