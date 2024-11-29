@@ -4,6 +4,7 @@ import { google } from 'googleapis';
 import dayjs from 'dayjs';
 import 'dotenv/config';
 import path from 'path';
+import { sendMessage } from './telegram.js';
 
 mongoose.connect(process.env['MONGOBD_URL']);
 
@@ -64,16 +65,19 @@ let isGoogleSheetSyncRunning = false;
 export const syncGoogleSheet = async () => {
     if (isGoogleSheetSyncRunning) {
         console.log(`[${new Date().toISOString()}] Running another Google Sheets sync...`);
+        await sendMessage(`[${new Date().toISOString()}]\nRunning another Google Sheets sync...`);
         return;
     }
     isGoogleSheetSyncRunning = true;
 
     try {
         console.log(`[${new Date().toISOString()}] Starting Google Sheets sync...`);
+        await sendMessage(`[${new Date().toISOString()}]\nStarting Google Sheets sync...`);
 
         const unsyncedTransactions = await getUnsyncedTransactions();
         if (unsyncedTransactions.length === 0) {
-            console.log('No unsynced transactions found.');
+            console.log(`[${new Date().toISOString()}] No unsynced transactions found.`);
+            await sendMessage(`[${new Date().toISOString()}]\nNo unsynced transactions found...`);
             return;
         }
 
@@ -86,14 +90,18 @@ export const syncGoogleSheet = async () => {
         await markTransactionsAsSynced(unsyncedTransactions);
 
         console.log(`[${new Date().toISOString()}] Google Sheets sync completed: ${rows.length} transactions added.`);
+        await sendMessage(
+            `[${new Date().toISOString()}] Google Sheets sync completed: ${rows.length} transactions added.`
+        );
     } catch (error) {
         console.error(`[${new Date().toISOString()}] Google Sheets sync failed:`, error);
+        await sendMessage(`[${new Date().toISOString()}] Google Sheets sync failed. Skipping and restarting...`);
     } finally {
         isGoogleSheetSyncRunning = false;
     }
 };
 
-const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in ms
+const SYNC_INTERVAL = process.env['SYNC_INTERVAL'];
 export const startSyncScheduler = () => {
     console.log('Starting sync scheduler...');
     setInterval(syncGoogleSheet, SYNC_INTERVAL);

@@ -5,3 +5,4 @@ node_modules/
 dist/
 service-account-key-gs.json
 mongo-data/
+logs.txt

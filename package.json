@@ -9,6 +9,7 @@
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.5",
     "googleapis": "^144.0.0",
-    "mongoose": "^8.8.3"
+    "mongoose": "^8.8.3",
+    "puppeteer": "^23.9.0"
   }
 }
