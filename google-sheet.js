@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { Transaction } from './db/models.js';
+import { Reservation, Transaction } from './db/models.js';
 import { google } from 'googleapis';
 import dayjs from 'dayjs';
 import 'dotenv/config';
@@ -14,6 +14,63 @@ export const authorizeGoogleSheets = async () => {
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
     return await auth.getClient();
+};
+
+export const getUnsyncedReservations = async () => {
+    return Reservation.find({ synced: false }).lean();
+};
+
+export const syncReservationsToGoogleSheet = async () => {
+    try {
+        console.log(`[${new Date().toISOString()}] Starting Google Sheets sync for reservations...`);
+
+        const auth = await authorizeGoogleSheets();
+        const sheetName = process.env['G_RESERVATION_SHEET'];
+
+        const sheets = google.sheets({ version: 'v4', auth });
+        await sheets.spreadsheets.values.clear({
+            spreadsheetId: process.env['G_SPREADSHEET_ID'],
+            range: `${sheetName}!A1:Z`,
+        });
+
+        const unsyncedReservations = await getUnsyncedReservations();
+
+        if (unsyncedReservations.length === 0) {
+            console.log(`[${new Date().toISOString()}] No unsynced reservations to sync.`);
+            return;
+        }
+
+        const rows = unsyncedReservations.map((res) => [
+            res.reservationId || '',
+            res.amount?.value || 0,
+            res.amount?.currency || '',
+            res.originalAmount?.value || 0,
+            res.originalAmount?.currency || '',
+            res.creditDebitIndicator || '',
+            dayjs(res.startDateTime) && dayjs(res.startDateTime).isValid()
+                ? dayjs(res.startDateTime).format('YYYY-MM-DD')
+                : '',
+            dayjs(res.expirationDate) && dayjs(res.expirationDate).isValid()
+                ? dayjs(res.expirationDate).format('YYYY-MM-DD')
+                : '',
+            res.reservationState || '',
+            res.reservationType || '',
+            res.cardholderName || '',
+            res.maskedPAN || '',
+            res.terminalId || '',
+            res.merchantInfo?.merchantName || '',
+        ]);
+
+        await appendToGoogleSheet(auth, sheetName, rows);
+
+        const ids = unsyncedReservations.map((res) => res._id);
+        await Reservation.updateMany({ _id: { $in: ids } }, { $set: { synced: true } });
+
+        console.log(`[${new Date().toISOString()}] Synced ${rows.length} reservations to Google Sheets.`);
+        await sendMessage(`[${new Date().toISOString()}]\nSynced ${rows.length} reservations to Google Sheets.`);
+    } catch (error) {
+        throw error;
+    }
 };
 
 export const getUnsyncedTransactions = async () => {
@@ -65,45 +122,40 @@ let isGoogleSheetSyncRunning = false;
 export const syncGoogleSheet = async () => {
     if (isGoogleSheetSyncRunning) {
         console.log(`[${new Date().toISOString()}] Running another Google Sheets sync...`);
-        await sendMessage(`[${new Date().toISOString()}]\nRunning another Google Sheets sync...`);
         return;
     }
     isGoogleSheetSyncRunning = true;
 
     try {
         console.log(`[${new Date().toISOString()}] Starting Google Sheets sync...`);
-        await sendMessage(`[${new Date().toISOString()}]\nStarting Google Sheets sync...`);
 
         const unsyncedTransactions = await getUnsyncedTransactions();
-        if (unsyncedTransactions.length === 0) {
+        if (unsyncedTransactions.length > 0) {
+            const auth = await authorizeGoogleSheets();
+            const sheetName = process.env['G_SPREADSHEET_SHEET'];
+
+            const rows = formatTransactionsForSheet(unsyncedTransactions);
+
+            await appendToGoogleSheet(auth, sheetName, rows);
+            await markTransactionsAsSynced(unsyncedTransactions);
+
+            console.log(
+                `[${new Date().toISOString()}] Google Sheets sync completed: ${rows.length} transactions added.`
+            );
+            await sendMessage(
+                `[${new Date().toISOString()}] Google Sheets sync completed: ${rows.length} transactions added.`
+            );
+            console.log('syncReservationsToGoogleSheet');
+        } else {
             console.log(`[${new Date().toISOString()}] No unsynced transactions found.`);
             await sendMessage(`[${new Date().toISOString()}]\nNo unsynced transactions found...`);
-            return;
         }
 
-        const auth = await authorizeGoogleSheets();
-        const sheetName = process.env['G_SPREADSHEET_SHEET'];
-
-        const rows = formatTransactionsForSheet(unsyncedTransactions);
-
-        await appendToGoogleSheet(auth, sheetName, rows);
-        await markTransactionsAsSynced(unsyncedTransactions);
-
-        console.log(`[${new Date().toISOString()}] Google Sheets sync completed: ${rows.length} transactions added.`);
-        await sendMessage(
-            `[${new Date().toISOString()}] Google Sheets sync completed: ${rows.length} transactions added.`
-        );
+        await syncReservationsToGoogleSheet();
     } catch (error) {
         console.error(`[${new Date().toISOString()}] Google Sheets sync failed:`, error);
         await sendMessage(`[${new Date().toISOString()}] Google Sheets sync failed. Skipping and restarting...`);
     } finally {
         isGoogleSheetSyncRunning = false;
     }
-};
-
-const SYNC_INTERVAL = process.env['SYNC_INTERVAL'];
-export const startSyncScheduler = () => {
-    console.log('Starting sync scheduler...');
-    setInterval(syncGoogleSheet, SYNC_INTERVAL);
-    syncGoogleSheet();
 };

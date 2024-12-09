@@ -1,10 +1,11 @@
 import https from 'https';
 import axios from 'axios';
-import { getLastDate, saveTransactions } from './db/operations.js';
+import { getLastDate, saveTransactions, syncReservationsToMongo } from './db/operations.js';
 import dayjs from 'dayjs';
 import config from './config.js';
 import { login } from './auth.js';
 import { sendMessage } from './telegram.js';
+import { syncGoogleSheet } from './google-sheet.js';
 
 const axiosInstance = axios.create({
     httpsAgent: new https.Agent({
@@ -32,6 +33,49 @@ export const getAccouts = async (params = {}) => {
 
     return accountsResponse.data;
 };
+
+export const getCards = async (accountId) => {
+    const response = await axiosInstance.get(`${process.env['CS_API_BASE_URL']}/accounts/${accountId}/cards`, {
+        headers: {
+            'Content-Type': 'application/json',
+            Cookie: `${config.cs_auth_session_cookie_name}=${sessionCookie}`,
+        },
+    });
+    return response.data.cards || [];
+};
+
+export const getReservationsForCard = async (accountId, cardId) => {
+    const response = await axiosInstance.get(
+        `${process.env['CS_API_BASE_URL']}/accounts/${accountId}/cards/${cardId}/reservations`,
+        {
+            headers: {
+                'Content-Type': 'application/json',
+                Cookie: `${config.cs_auth_session_cookie_name}=${sessionCookie}`,
+            },
+            params: {
+                reservationState: 'RESERVED',
+                size: 999,
+            },
+        }
+    );
+    return response.data.reservations || [];
+};
+
+export async function syncReservationsForAccount(accountId) {
+    try {
+        const cards = await getCards(accountId);
+
+        for (const card of cards) {
+            const reservations = await getReservationsForCard(accountId, card.id);
+            if (reservations.length > 0) {
+                await syncReservationsToMongo(reservations, accountId, card.id);
+            }
+        }
+    } catch (error) {
+        console.error(`Error syncing reservations for account ${accountId}:`, error);
+        throw error;
+    }
+}
 
 /**
  *
@@ -116,14 +160,12 @@ export const auth = async () =>
 export const syncTransactions = async () => {
     if (isRunning) {
         console.log(`[${new Date().toISOString()}] Running another transactions sync...`);
-        await sendMessage(`[${new Date().toISOString()}]\nRunning another transactions sync...`);
         return;
     }
 
     isRunning = true;
 
     console.log(`[${new Date().toISOString()}] Starting Transactions sync...`);
-    await sendMessage(`[${new Date().toISOString()}]\nStarting Transactions sync...`);
 
     try {
         if (!sessionCookie) {
@@ -145,9 +187,15 @@ export const syncTransactions = async () => {
         console.log(
             `[${new Date().toISOString()}] Transactions sync completed: ${transactionsTotalCreated}/${transactionsTotal} transactions added.`
         );
+
+        await syncReservationsForAccount(account.id);
+
+        console.log(`[${new Date().toISOString()}] Reservations sync completed.`);
+
         await sendMessage(
-            `[${new Date().toISOString()}]\nTransactions sync completed: ${transactionsTotalCreated}/${transactionsTotal} transactions added.`
+            `[${new Date().toISOString()}]\nTransactions sync completed:\n${transactionsTotalCreated}/${transactionsTotal} transactions added.`
         );
+        syncGoogleSheet();
     } catch (error) {
         sessionCookie = '';
         clearInterval(interval);
@@ -166,7 +214,7 @@ export const syncTransactions = async () => {
 
         setTimeout(() => {
             startSyncScheduler();
-        }, process.env['RESTART_DELAY']); // restart in 3 minutes
+        }, Number(process.env['RESTART_DELAY']));
 
         return;
     } finally {

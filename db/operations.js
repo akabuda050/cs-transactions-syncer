@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { Transaction } from './models.js';
+import { Reservation, Transaction } from './models.js';
 import dayjs from 'dayjs';
 import 'dotenv/config';
 
@@ -22,6 +22,48 @@ export async function saveTransactions(transactions) {
         return newCreated;
     } catch (error) {
         console.error('Error saving transactions:', error);
+        throw error;
+    }
+}
+
+export async function syncReservationsToMongo(reservations, accountId, cardId) {
+    try {
+        const reservationIds = reservations.map((res) => res.id);
+
+        for (const res of reservations) {
+            await Reservation.findOneAndUpdate(
+                { reservationId: res.id },
+                {
+                    reservationId: res.id,
+                    amount: res.reservationAmount,
+                    originalAmount: res.originalReservationAmount,
+                    creditDebitIndicator: res.creditDebitIndicator,
+                    accountId,
+                    cardId,
+                    startDateTime: res.startDateTime,
+                    expirationDate: res.expirationDate,
+                    reservationState: res.reservationState,
+                    reservationType: res.reservationType,
+                    cardholderName: res.cardholderName,
+                    maskedPAN: res.maskedPAN,
+                    terminalId: res.terminalId,
+                    merchantInfo: res.merchantInfo,
+                    synced: false,
+                },
+                { upsert: true }
+            );
+        }
+
+        const deleteResult = await Reservation.deleteMany({
+            cardId,
+            reservationId: { $nin: reservationIds },
+        });
+
+        console.log(
+            `Processed ${reservations.length} reservations for card ${cardId}. Deleted ${deleteResult.deletedCount}.`
+        );
+    } catch (error) {
+        console.error('Error syncing reservations to MongoDB:', error);
         throw error;
     }
 }
